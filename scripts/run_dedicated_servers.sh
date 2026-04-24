@@ -1,12 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -euo pipefail
+
+readonly unset_value="__DST_UNSET__"
 
 steamcmd_dir="${DST_STEAMCMD_DIR:-/root/steam/steamcmd}"
 install_dir="${DST_INSTALL_DIR:-/root/steam/dst}"
 cluster_name="${DST_CLUSTER_NAME:-Cluster_1}"
 dontstarve_dir="${DST_DONTSTARVE_DIR:-/root/.klei/DoNotStarveTogether}"
-defaults_dir="${DST_DEFAULTS_DIR:-/root/steam/defaults}"
+defaults_dir="${DST_DEFAULTS_DIR:-/opt/dst/defaults}"
 mods_dir="${DST_MODS_DIR:-$install_dir/mods}"
 log_dir="${DST_LOG_DIR:-$dontstarve_dir/logs}"
 log_max_size="${DST_LOG_MAX_SIZE:-10M}"
@@ -19,6 +21,12 @@ auto_backup_max_backups="${DST_AUTOBACKUP_MAX_BACKUPS:-10}"
 auto_backup_nice="${DST_AUTOBACKUP_NICE:-10}"
 auto_backup_announce_start="${DST_AUTOBACKUP_ANNOUNCE_START:-[DST] World backup started.}"
 auto_backup_announce_end="${DST_AUTOBACKUP_ANNOUNCE_END:-[DST] World backup finished.}"
+
+cluster_display_name_override="${DST_CLUSTER_DISPLAY_NAME-$unset_value}"
+cluster_description_override="${DST_CLUSTER_DESCRIPTION-$unset_value}"
+cluster_password_override="${DST_CLUSTER_PASSWORD-$unset_value}"
+cluster_token_override="${DST_CLUSTER_TOKEN-$unset_value}"
+max_players_override="${DST_MAX_PLAYERS-$unset_value}"
 
 cluster_dir="$dontstarve_dir/$cluster_name"
 default_cluster_dir="$defaults_dir/$cluster_name"
@@ -33,6 +41,7 @@ master_console_pipe="/tmp/dst-master.console"
 caves_console_pipe="/tmp/dst-caves.console"
 logrotate_conf="/tmp/dst-logrotate.conf"
 logrotate_state="/tmp/dst-logrotate.state"
+cluster_token_placeholder="REPLACE_WITH_YOUR_KLEI_CLUSTER_TOKEN"
 
 function fail()
 {
@@ -59,35 +68,6 @@ function check_for_directory()
 	fi
 }
 
-function cleanup_children()
-{
-	local pid
-
-	for pid in "${master_pid:-}" "${caves_pid:-}" "${logrotate_pid:-}" "${auto_backup_pid:-}"; do
-		if [ -n "$pid" ]; then
-			kill "$pid" 2>/dev/null || true
-		fi
-	done
-
-	for pid in "${master_pid:-}" "${caves_pid:-}" "${logrotate_pid:-}" "${auto_backup_pid:-}"; do
-		if [ -n "$pid" ]; then
-			wait "$pid" 2>/dev/null || true
-		fi
-	done
-
-	close_console_input "${master_console_fd:-}" "$master_console_pipe"
-	close_console_input "${caves_console_fd:-}" "$caves_console_pipe"
-}
-
-function generate_hex_id()
-{
-	local bytes="${1:-8}"
-
-	od -An -N"$bytes" -tx1 /dev/urandom \
-		| tr -d ' \n' \
-		| tr '[:lower:]' '[:upper:]'
-}
-
 function is_enabled()
 {
 	case "${1:-}" in
@@ -105,15 +85,47 @@ function is_non_negative_integer()
 	[[ "${1:-}" =~ ^[0-9]+$ ]]
 }
 
-function validate_auto_backup_config()
+function is_integer()
 {
-	if ! is_non_negative_integer "$auto_backup_interval_days" || [ "$auto_backup_interval_days" -eq 0 ]; then
-		fail "DST_AUTOBACKUP_INTERVAL_DAYS must be a positive integer."
+	[[ "${1:-}" =~ ^-?[0-9]+$ ]]
+}
+
+function validate_positive_integer()
+{
+	local value="$1"
+	local variable_name="$2"
+
+	if ! is_non_negative_integer "$value" || [ "$value" -eq 0 ]; then
+		fail "$variable_name must be a positive integer."
+	fi
+}
+
+function validate_runtime_config()
+{
+	[ -n "$cluster_name" ] || fail "DST_CLUSTER_NAME must not be empty."
+
+	validate_positive_integer "$log_rotate_count" "DST_LOG_ROTATE_COUNT"
+	validate_positive_integer "$log_rotate_interval" "DST_LOG_ROTATE_INTERVAL"
+	validate_positive_integer "$shutdown_timeout" "DST_SHUTDOWN_TIMEOUT"
+	validate_positive_integer "$auto_backup_interval_days" "DST_AUTOBACKUP_INTERVAL_DAYS"
+	validate_positive_integer "$auto_backup_max_backups" "DST_AUTOBACKUP_MAX_BACKUPS"
+
+	if ! is_integer "$auto_backup_nice"; then
+		fail "DST_AUTOBACKUP_NICE must be an integer."
 	fi
 
-	if ! is_non_negative_integer "$auto_backup_max_backups" || [ "$auto_backup_max_backups" -eq 0 ]; then
-		fail "DST_AUTOBACKUP_MAX_BACKUPS must be a positive integer."
+	if [ "$max_players_override" != "$unset_value" ]; then
+		validate_positive_integer "$max_players_override" "DST_MAX_PLAYERS"
 	fi
+}
+
+function generate_hex_id()
+{
+	local bytes="${1:-8}"
+
+	od -An -N"$bytes" -tx1 /dev/urandom \
+		| tr -d ' \n' \
+		| tr '[:lower:]' '[:upper:]'
 }
 
 function create_console_input()
@@ -139,6 +151,35 @@ function close_console_input()
 	fi
 
 	rm -f "$pipe"
+}
+
+function stop_background_processes()
+{
+	local pid
+
+	for pid in "$@"; do
+		if [ -n "${pid:-}" ]; then
+			kill "$pid" 2>/dev/null || true
+		fi
+	done
+
+	for pid in "$@"; do
+		if [ -n "${pid:-}" ]; then
+			wait "$pid" 2>/dev/null || true
+		fi
+	done
+}
+
+function cleanup_children()
+{
+	stop_background_processes \
+		"${master_pid:-}" \
+		"${caves_pid:-}" \
+		"${logrotate_pid:-}" \
+		"${auto_backup_pid:-}"
+
+	close_console_input "${master_console_fd:-}" "$master_console_pipe"
+	close_console_input "${caves_console_fd:-}" "$caves_console_pipe"
 }
 
 function send_console_command()
@@ -281,12 +322,10 @@ function backup_already_exists_for_day()
 
 function prune_old_auto_backups()
 {
-	local keep_count
+	local keep_count="$auto_backup_max_backups"
 	local -a metas
 	local old_meta
 	local day_token
-
-	keep_count="$auto_backup_max_backups"
 
 	mapfile -t metas < <(
 		find "$auto_backup_dir" -maxdepth 1 -type f -name "${auto_backup_name_prefix}[0-9]*.meta" \
@@ -367,23 +406,13 @@ function auto_backup_loop()
 
 		function cleanup_auto_backup_loop()
 		{
-			if [ -n "$master_stream_pid" ]; then
-				kill "$master_stream_pid" 2>/dev/null || true
-				wait "$master_stream_pid" 2>/dev/null || true
-			fi
-
-			if [ -n "$caves_stream_pid" ]; then
-				kill "$caves_stream_pid" 2>/dev/null || true
-				wait "$caves_stream_pid" 2>/dev/null || true
-			fi
-
+			stop_background_processes "$master_stream_pid" "$caves_stream_pid"
 			exec 9>&- 9<&- 2>/dev/null || true
 			rm -f "$event_pipe"
 		}
 
 		trap cleanup_auto_backup_loop EXIT INT TERM
 
-		validate_auto_backup_config
 		mkdir -p "$auto_backup_dir"
 		info "Auto backup enabled: every ${auto_backup_interval_days} days, keep ${auto_backup_max_backups} backups."
 
@@ -448,67 +477,165 @@ function start_auto_backup_monitor()
 	auto_backup_pid=$!
 }
 
+function set_ini_value()
+{
+	local file="$1"
+	local section="$2"
+	local key="$3"
+	local value="$4"
+	local tmp_file="${file}.tmp"
+
+	check_for_file "$file"
+
+	awk \
+		-v target_section="$section" \
+		-v target_key="$key" \
+		-v target_value="$value" '
+		BEGIN {
+			section_header = "[" target_section "]"
+			section_found = 0
+			in_section = 0
+			key_written = 0
+		}
+		{
+			if ($0 == section_header) {
+				print
+				section_found = 1
+				in_section = 1
+				next
+			}
+
+			if (in_section && /^\[.*\]$/) {
+				if (!key_written) {
+					print target_key " = " target_value
+				}
+				in_section = 0
+				key_written = 1
+			}
+
+			if (in_section && $0 ~ "^[[:space:]]*" target_key "[[:space:]]*=") {
+				if (!key_written) {
+					print target_key " = " target_value
+				}
+				key_written = 1
+				next
+			}
+
+			print
+		}
+		END {
+			if (in_section && !key_written) {
+				print target_key " = " target_value
+			} else if (!section_found) {
+				if (NR > 0) {
+					print ""
+				}
+				print section_header
+				print target_key " = " target_value
+			}
+		}
+	' "$file" > "$tmp_file"
+
+	mv -f "$tmp_file" "$file"
+}
+
 function initialize_template_identifiers()
 {
 	local cluster_ini="$cluster_dir/cluster.ini"
 	local caves_server_ini="$cluster_dir/Caves/server.ini"
 	local cluster_cloud_id
 
-	if [ ! -f "$template_stamp" ]; then
-		if [ -f "$cluster_ini" ]; then
-			cluster_cloud_id="$(generate_hex_id 8)"
-			sed -i -E \
-				"s/^([[:space:]]*cluster_cloud_id[[:space:]]*=[[:space:]]*).*/\\1$cluster_cloud_id/" \
-				"$cluster_ini"
-			info "Generated unique cluster_cloud_id for this deployment."
-		fi
-
-		if [ -f "$caves_server_ini" ] && grep -Eq '^[[:space:]]*id[[:space:]]*=' "$caves_server_ini"; then
-			sed -i -E '/^[[:space:]]*id[[:space:]]*=/d' "$caves_server_ini"
-			info "Removed hard-coded Caves shard id so DST can auto-generate a unique value."
-		fi
-
-		touch "$template_stamp"
-	fi
-}
-
-function handle_shutdown()
-{
-	if [ "${shutdown_requested:-0}" -eq 1 ]; then
+	if [ -f "$template_stamp" ]; then
 		return
 	fi
 
-	shutdown_requested=1
-
-	info "Shutdown signal received. Asking shards to save and stop."
-	request_graceful_shutdown
-
-	if wait_for_shards_to_exit "$shutdown_timeout"; then
-		info "Shards stopped cleanly."
-	else
-		info "Graceful shard shutdown timed out after ${shutdown_timeout}s. Forcing stop."
+	if [ -f "$cluster_ini" ]; then
+		cluster_cloud_id="$(generate_hex_id 8)"
+		set_ini_value "$cluster_ini" "NETWORK" "cluster_cloud_id" "$cluster_cloud_id"
+		info "Generated unique cluster_cloud_id for this deployment."
 	fi
 
-	exit 0
+	if [ -f "$caves_server_ini" ] && grep -Eq '^[[:space:]]*id[[:space:]]*=' "$caves_server_ini"; then
+		sed -i -E '/^[[:space:]]*id[[:space:]]*=/d' "$caves_server_ini"
+		info "Removed hard-coded Caves shard id so DST can auto-generate a unique value."
+	fi
+
+	touch "$template_stamp"
 }
 
-function seed_default_data_if_needed()
+function seed_default_cluster_if_needed()
+{
+	if [ -d "$cluster_dir" ]; then
+		info "Existing cluster found. Keeping current data in $cluster_dir."
+		return
+	fi
+
+	check_for_directory "$default_cluster_dir"
+
+	info "No cluster found. Seeding default template for $cluster_name."
+	cp -a "$default_cluster_dir" "$cluster_dir"
+	initialize_template_identifiers
+}
+
+function seed_default_mods()
+{
+	check_for_directory "$default_mods_dir"
+	mkdir -p "$mods_dir"
+	cp -an "$default_mods_dir/." "$mods_dir/"
+}
+
+function ensure_cluster_token()
+{
+	local token_file="$cluster_dir/cluster_token.txt"
+	local token_value
+
+	if [ "$cluster_token_override" != "$unset_value" ]; then
+		token_value="$(printf '%s' "$cluster_token_override" | tr -d '\r\n')"
+		[ -n "$token_value" ] || fail "DST_CLUSTER_TOKEN must not be empty."
+		printf '%s\n' "$token_value" > "$token_file"
+		chmod 600 "$token_file" 2>/dev/null || true
+		return
+	fi
+
+	check_for_file "$token_file"
+	token_value="$(tr -d '\r\n' < "$token_file")"
+
+	if [ -z "$token_value" ] || [ "$token_value" = "$cluster_token_placeholder" ]; then
+		fail "Missing cluster token. Set DST_CLUSTER_TOKEN or update $token_file."
+	fi
+}
+
+function apply_cluster_overrides()
+{
+	local cluster_ini="$cluster_dir/cluster.ini"
+
+	check_for_file "$cluster_ini"
+
+	if [ "$cluster_display_name_override" != "$unset_value" ]; then
+		[ -n "$cluster_display_name_override" ] || fail "DST_CLUSTER_DISPLAY_NAME must not be empty."
+		set_ini_value "$cluster_ini" "NETWORK" "cluster_name" "$cluster_display_name_override"
+	fi
+
+	if [ "$cluster_description_override" != "$unset_value" ]; then
+		set_ini_value "$cluster_ini" "NETWORK" "cluster_description" "$cluster_description_override"
+	fi
+
+	if [ "$cluster_password_override" != "$unset_value" ]; then
+		set_ini_value "$cluster_ini" "NETWORK" "cluster_password" "$cluster_password_override"
+	fi
+
+	if [ "$max_players_override" != "$unset_value" ]; then
+		set_ini_value "$cluster_ini" "GAMEPLAY" "max_players" "$max_players_override"
+	fi
+}
+
+function prepare_runtime_data()
 {
 	mkdir -p "$dontstarve_dir" "$log_dir"
-
-	if [ ! -d "$cluster_dir" ]; then
-		check_for_directory "$default_cluster_dir"
-		check_for_directory "$default_mods_dir"
-
-		info "No cluster found. Seeding bundled cluster template and paired mods."
-		cp -a "$default_cluster_dir" "$dontstarve_dir/"
-		initialize_template_identifiers
-
-		mkdir -p "$mods_dir"
-		cp -an "$default_mods_dir/." "$mods_dir/"
-	else
-		info "Existing cluster found. Skipping bundled cluster template and paired mods."
-	fi
+	seed_default_cluster_if_needed
+	seed_default_mods
+	apply_cluster_overrides
+	ensure_cluster_token
 }
 
 function prepare_log_rotation()
@@ -547,11 +674,10 @@ function validate_cluster_files()
 
 function update_server_files()
 {
-	cd "$steamcmd_dir" || fail "Missing $steamcmd_dir directory!"
-
+	cd "$steamcmd_dir" || fail "Missing $steamcmd_dir directory."
 	check_for_file "$steamcmd_dir/steamcmd.sh"
 
-	info "Updating DST dedicated server files."
+	info "Updating DST dedicated server files via SteamCMD."
 	./steamcmd.sh +force_install_dir "$install_dir" +login anonymous +app_update 343050 +quit \
 		>> "$steamcmd_log" 2>&1 || fail "SteamCMD update failed. See $steamcmd_log"
 
@@ -565,7 +691,7 @@ function start_shards()
 	local master_fd
 	local caves_fd
 
-	cd "$install_dir/bin64" || fail "Missing $install_dir/bin64 directory!"
+	cd "$install_dir/bin64" || fail "Missing $install_dir/bin64 directory."
 	check_for_file "$install_dir/bin64/dontstarve_dedicated_server_nullrenderer_x64"
 
 	create_console_input "$caves_console_pipe" caves_console_fd
@@ -606,13 +732,39 @@ function wait_for_shards()
 	exit "$status"
 }
 
+function handle_shutdown()
+{
+	if [ "${shutdown_requested:-0}" -eq 1 ]; then
+		return
+	fi
+
+	shutdown_requested=1
+
+	info "Shutdown signal received. Asking shards to save and stop."
+	request_graceful_shutdown
+
+	if wait_for_shards_to_exit "$shutdown_timeout"; then
+		info "Shards stopped cleanly."
+	else
+		info "Graceful shard shutdown timed out after ${shutdown_timeout}s. Forcing stop."
+	fi
+
+	exit 0
+}
+
+function main()
+{
+	validate_runtime_config
+	prepare_runtime_data
+	validate_cluster_files
+	prepare_log_rotation
+	update_server_files
+	start_shards
+	start_auto_backup_monitor
+	wait_for_shards
+}
+
 trap cleanup_children EXIT
 trap handle_shutdown INT TERM
 
-seed_default_data_if_needed
-prepare_log_rotation
-validate_cluster_files
-update_server_files
-start_shards
-start_auto_backup_monitor
-wait_for_shards
+main "$@"

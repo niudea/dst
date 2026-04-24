@@ -2,6 +2,10 @@ runtime/
 steamcmd/
 .git/
 .gitignore
+.github/
+.env
+compose.yaml
+README.md
 *.log
 *.tar.gz
 *.tmp
