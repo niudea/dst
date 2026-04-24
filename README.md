@@ -50,20 +50,6 @@ docker logs -f dst
 docker rm -f dst
 ```
 
-## 可选环境变量
-
-如果你想改自动备份频率，可以自己准备一个 `.env`：
-
-```bash
-cp .env.example .env
-```
-
-然后启动时加上：
-
-```bash
---env-file .env
-```
-
 ## 端口
 
 - `10999/udp`：Master

@@ -3,7 +3,6 @@ steamcmd/
 .git/
 .gitignore
 .github/
-.env
 README.md
 *.log
 *.tar.gz

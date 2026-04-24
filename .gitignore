@@ -1,6 +1,5 @@
 runtime/
 steamcmd/
-.env
 *.log
 *.tar.gz
 *.tmp
