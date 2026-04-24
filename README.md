@@ -9,7 +9,7 @@ cp .env.example .env
 mkdir -p runtime/klei runtime/dst
 ```
 
-把 `.env` 里的 `DST_CLUSTER_TOKEN` 改成你自己的 Klei token，需要的话再改服务器名字、密码和人数。
+直接用默认模板就能跑。要改服务器名字、密码、人数这些，再去改 `.env` 里的对应变量。
 
 ## 构建镜像
 
@@ -47,11 +47,11 @@ docker rm -f dst
 
 ## 常用变量
 
-- `DST_CLUSTER_TOKEN`：必填
-- `DST_CLUSTER_DISPLAY_NAME`：服务器名字
-- `DST_CLUSTER_DESCRIPTION`：服务器描述
-- `DST_CLUSTER_PASSWORD`：服务器密码
-- `DST_MAX_PLAYERS`：最大人数
+- `DST_CLUSTER_TOKEN`：可选，不填就用模板里的默认 token
+- `DST_CLUSTER_DISPLAY_NAME`：可选，服务器名字
+- `DST_CLUSTER_DESCRIPTION`：可选，服务器描述
+- `DST_CLUSTER_PASSWORD`：可选，服务器密码
+- `DST_MAX_PLAYERS`：可选，最大人数
 - `DST_AUTOBACKUP_INTERVAL_DAYS`：自动备份间隔
 - `DST_AUTOBACKUP_MAX_BACKUPS`：备份保留数量
 

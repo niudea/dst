@@ -41,7 +41,6 @@ master_console_pipe="/tmp/dst-master.console"
 caves_console_pipe="/tmp/dst-caves.console"
 logrotate_conf="/tmp/dst-logrotate.conf"
 logrotate_state="/tmp/dst-logrotate.state"
-cluster_token_placeholder="REPLACE_WITH_YOUR_KLEI_CLUSTER_TOKEN"
 
 function fail()
 {
@@ -600,7 +599,7 @@ function ensure_cluster_token()
 	check_for_file "$token_file"
 	token_value="$(tr -d '\r\n' < "$token_file")"
 
-	if [ -z "$token_value" ] || [ "$token_value" = "$cluster_token_placeholder" ]; then
+	if [ -z "$token_value" ]; then
 		fail "Missing cluster token. Set DST_CLUSTER_TOKEN or update $token_file."
 	fi
 }
