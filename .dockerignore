@@ -4,7 +4,6 @@ steamcmd/
 .gitignore
 .github/
 .env
-compose.yaml
 README.md
 *.log
 *.tar.gz
