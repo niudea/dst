@@ -1,0 +1,7 @@
+runtime/
+steamcmd/
+.git/
+.gitignore
+*.log
+*.tar.gz
+*.tmp

@@ -1,0 +1,5 @@
+runtime/
+steamcmd/
+*.log
+*.tar.gz
+*.tmp
