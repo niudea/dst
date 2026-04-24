@@ -5,11 +5,17 @@
 ## 先准备目录和配置
 
 ```bash
-cp .env.example .env
 mkdir -p runtime/klei runtime/dst
 ```
 
-直接用默认模板就能跑。要改服务器名字、密码、人数这些，再去改 `.env` 里的对应变量。
+默认配置都在这两个文件里：
+
+- `defaults/Cluster_1/cluster.ini`
+- `defaults/Cluster_1/cluster_token.txt`
+
+要改服务器名字、描述、密码、人数这些，直接改 `cluster.ini`。
+
+第一次启动前改的是 `defaults/Cluster_1/*`；启动过以后，要改 `runtime/klei/Cluster_1/*`，因为容器不会覆盖已有存档目录。
 
 ## 构建镜像
 
@@ -23,7 +29,6 @@ docker build -t niudea/dst:latest .
 docker run -d \
   --name dst \
   --restart unless-stopped \
-  --env-file .env \
   -p 10999:10999/udp \
   -p 10998:10998/udp \
   -p 27017:27017/udp \
@@ -45,15 +50,19 @@ docker logs -f dst
 docker rm -f dst
 ```
 
-## 常用变量
+## 可选环境变量
 
-- `DST_CLUSTER_TOKEN`：可选，不填就用模板里的默认 token
-- `DST_CLUSTER_DISPLAY_NAME`：可选，服务器名字
-- `DST_CLUSTER_DESCRIPTION`：可选，服务器描述
-- `DST_CLUSTER_PASSWORD`：可选，服务器密码
-- `DST_MAX_PLAYERS`：可选，最大人数
-- `DST_AUTOBACKUP_INTERVAL_DAYS`：自动备份间隔
-- `DST_AUTOBACKUP_MAX_BACKUPS`：备份保留数量
+如果你想改自动备份频率，可以自己准备一个 `.env`：
+
+```bash
+cp .env.example .env
+```
+
+然后启动时加上：
+
+```bash
+--env-file .env
+```
 
 ## 端口
 

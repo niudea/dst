@@ -2,8 +2,6 @@
 
 set -euo pipefail
 
-readonly unset_value="__DST_UNSET__"
-
 steamcmd_dir="${DST_STEAMCMD_DIR:-/root/steam/steamcmd}"
 install_dir="${DST_INSTALL_DIR:-/root/steam/dst}"
 cluster_name="${DST_CLUSTER_NAME:-Cluster_1}"
@@ -21,12 +19,6 @@ auto_backup_max_backups="${DST_AUTOBACKUP_MAX_BACKUPS:-10}"
 auto_backup_nice="${DST_AUTOBACKUP_NICE:-10}"
 auto_backup_announce_start="${DST_AUTOBACKUP_ANNOUNCE_START:-[DST] World backup started.}"
 auto_backup_announce_end="${DST_AUTOBACKUP_ANNOUNCE_END:-[DST] World backup finished.}"
-
-cluster_display_name_override="${DST_CLUSTER_DISPLAY_NAME-$unset_value}"
-cluster_description_override="${DST_CLUSTER_DESCRIPTION-$unset_value}"
-cluster_password_override="${DST_CLUSTER_PASSWORD-$unset_value}"
-cluster_token_override="${DST_CLUSTER_TOKEN-$unset_value}"
-max_players_override="${DST_MAX_PLAYERS-$unset_value}"
 
 cluster_dir="$dontstarve_dir/$cluster_name"
 default_cluster_dir="$defaults_dir/$cluster_name"
@@ -113,9 +105,6 @@ function validate_runtime_config()
 		fail "DST_AUTOBACKUP_NICE must be an integer."
 	fi
 
-	if [ "$max_players_override" != "$unset_value" ]; then
-		validate_positive_integer "$max_players_override" "DST_MAX_PLAYERS"
-	fi
 }
 
 function generate_hex_id()
@@ -588,14 +577,6 @@ function ensure_cluster_token()
 	local token_file="$cluster_dir/cluster_token.txt"
 	local token_value
 
-	if [ "$cluster_token_override" != "$unset_value" ]; then
-		token_value="$(printf '%s' "$cluster_token_override" | tr -d '\r\n')"
-		[ -n "$token_value" ] || fail "DST_CLUSTER_TOKEN must not be empty."
-		printf '%s\n' "$token_value" > "$token_file"
-		chmod 600 "$token_file" 2>/dev/null || true
-		return
-	fi
-
 	check_for_file "$token_file"
 	token_value="$(tr -d '\r\n' < "$token_file")"
 
@@ -604,36 +585,11 @@ function ensure_cluster_token()
 	fi
 }
 
-function apply_cluster_overrides()
-{
-	local cluster_ini="$cluster_dir/cluster.ini"
-
-	check_for_file "$cluster_ini"
-
-	if [ "$cluster_display_name_override" != "$unset_value" ]; then
-		[ -n "$cluster_display_name_override" ] || fail "DST_CLUSTER_DISPLAY_NAME must not be empty."
-		set_ini_value "$cluster_ini" "NETWORK" "cluster_name" "$cluster_display_name_override"
-	fi
-
-	if [ "$cluster_description_override" != "$unset_value" ]; then
-		set_ini_value "$cluster_ini" "NETWORK" "cluster_description" "$cluster_description_override"
-	fi
-
-	if [ "$cluster_password_override" != "$unset_value" ]; then
-		set_ini_value "$cluster_ini" "NETWORK" "cluster_password" "$cluster_password_override"
-	fi
-
-	if [ "$max_players_override" != "$unset_value" ]; then
-		set_ini_value "$cluster_ini" "GAMEPLAY" "max_players" "$max_players_override"
-	fi
-}
-
 function prepare_runtime_data()
 {
 	mkdir -p "$dontstarve_dir" "$log_dir"
 	seed_default_cluster_if_needed
 	seed_default_mods
-	apply_cluster_overrides
 	ensure_cluster_token
 }
 
